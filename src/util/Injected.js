@@ -930,4 +930,6 @@ exports.LoadUtils = () => {
 
         return undefined;
     };
+
+    window.isWWebJSInitialized = true;
 };
