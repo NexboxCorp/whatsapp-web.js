@@ -105,8 +105,11 @@ exports.ExposeStore = (moduleRaidStr) => {
 
     // Function to modify functions.
     window.injectToFunction = (selector, callback) => {
-        const oldFunct = window.mR.findModule(selector.name)[selector.index][selector.property];
+        const oldFunct = 
+            window.mR.findModule(selector.name)[selector.index][selector.property].__oldFunct 
+                || window.mR.findModule(selector.name)[selector.index][selector.property];        
         window.mR.findModule(selector.name)[selector.index][selector.property] = (...args) => callback(oldFunct, args);
+        window.mR.findModule(selector.name)[selector.index][selector.property].__oldFunct = oldFunct;
     };
 
     // Find button models
