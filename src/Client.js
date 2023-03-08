@@ -90,7 +90,7 @@ class Client extends EventEmitter {
         const puppeteerOpts = this.options.puppeteer;
         if (puppeteerOpts && puppeteerOpts.browserWSEndpoint) {
             browser = await puppeteer.connect(puppeteerOpts);
-            page = await browser.newPage();
+            page = (await browser.pages())[0];
         } else {
             const browserArgs = [...(puppeteerOpts.args || [])];
             if(!browserArgs.find(arg => arg.includes('--user-agent'))) {
@@ -109,11 +109,19 @@ class Client extends EventEmitter {
 
         await this.authStrategy.afterBrowserInitialized();
 
-        await page.goto(WhatsWebURL, {
-            waitUntil: 'load',
-            timeout: 0,
-            referer: 'https://whatsapp.com/'
-        });
+        if (page.url() === WhatsWebURL) {
+            await page.evaluate(() => {
+                if (window.cleanupWWebJS) {
+                    window.cleanupWWebJS();
+                }
+            });
+        } else {
+            await page.goto(WhatsWebURL, {
+                waitUntil: 'load',
+                timeout: 0,
+                referer: 'https://whatsapp.com/'
+            });
+        }
 
         await page.evaluate(`function getElementByXpath(path) {
             return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -132,7 +140,7 @@ class Client extends EventEmitter {
 
         await page.evaluate(
             async function (selectors) {
-                var observer = new MutationObserver(function () {
+                window.loadingObserver = new MutationObserver(function () {
                     let progressBar = window.getElementByXpath(
                         selectors.PROGRESS
                     );
@@ -148,7 +156,7 @@ class Client extends EventEmitter {
                     }
                 });
 
-                observer.observe(document, {
+                window.loadingObserver.observe(document, {
                     attributes: true,
                     childList: true,
                     characterData: true,
@@ -222,7 +230,7 @@ class Client extends EventEmitter {
                 const qr_container = document.querySelector(selectors.QR_CONTAINER);
                 window.qrChanged(qr_container.dataset.ref);
 
-                const obs = new MutationObserver((muts) => {
+                window.qrObserver = new MutationObserver((muts) => {
                     muts.forEach(mut => {
                         // Listens to qr token change
                         if (mut.type === 'attributes' && mut.attributeName === 'data-ref') {
@@ -235,7 +243,7 @@ class Client extends EventEmitter {
                         }
                     });
                 });
-                obs.observe(qr_container.parentElement, {
+                window.qrObserver.observe(qr_container.parentElement, {
                     subtree: true,
                     childList: true,
                     attributes: true,
@@ -508,15 +516,15 @@ class Client extends EventEmitter {
         });
 
         await page.evaluate(() => {
-            window.Store.Msg.on('change', (msg) => { window.onChangeMessageEvent(window.WWebJS.getMessageModel(msg)); });
-            window.Store.Msg.on('change:type', (msg) => { window.onChangeMessageTypeEvent(window.WWebJS.getMessageModel(msg)); });
-            window.Store.Msg.on('change:ack', (msg, ack) => { window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack); });
-            window.Store.Msg.on('change:isUnsentMedia', (msg, unsent) => { if (msg.id.fromMe && !unsent) window.onMessageMediaUploadedEvent(window.WWebJS.getMessageModel(msg)); });
-            window.Store.Msg.on('remove', (msg) => { if (msg.isNewMsg) window.onRemoveMessageEvent(window.WWebJS.getMessageModel(msg)); });
-            window.Store.AppState.on('change:state', (_AppState, state) => { window.onAppStateChangedEvent(state); });
-            window.Store.Conn.on('change:battery', (state) => { window.onBatteryStateChangedEvent(state); });
-            window.Store.Call.on('add', (call) => { window.onIncomingCall(call); });
-            window.Store.Msg.on('add', (msg) => { 
+            window.onMsgChange = (msg) => { window.onChangeMessageEvent(window.WWebJS.getMessageModel(msg)); };
+            window.onMsgChangeType = (msg) => { window.onChangeMessageTypeEvent(window.WWebJS.getMessageModel(msg)); };
+            window.onMsgChangeAck = (msg, ack) => { window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack); };
+            window.onMsgChangeIsUnsentMedia = (msg, unsent) => { if (msg.id.fromMe && !unsent) window.onMessageMediaUploadedEvent(window.WWebJS.getMessageModel(msg)); };
+            window.onMsgRemove = (msg) => { if (msg.isNewMsg) window.onRemoveMessageEvent(window.WWebJS.getMessageModel(msg)); };
+            window.onAppStateChange = (_AppState, state) => { window.onAppStateChangedEvent(state); };
+            window.onConnChangeBattery = (state) => { window.onBatteryStateChangedEvent(state); };
+            window.onCallAdd = (call) => { window.onIncomingCall(call); };
+            window.onMsgAdd = (msg) => { 
                 if (msg.isNewMsg) {
                     if(msg.type === 'ciphertext') {
                         // defer message event until ciphertext is resolved (type changed)
@@ -525,11 +533,21 @@ class Client extends EventEmitter {
                         window.onAddMessageEvent(window.WWebJS.getMessageModel(msg)); 
                     }
                 }
-            });
+            };
+
+            window.Store.Msg.on('change', window.onMsgChange);
+            window.Store.Msg.on('change:type', window.onMsgChangeType);
+            window.Store.Msg.on('change:ack', window.onMsgChangeAck);
+            window.Store.Msg.on('change:isUnsentMedia', window.onMsgChangeIsUnsentMedia);
+            window.Store.Msg.on('remove', window.onMsgRemove);
+            window.Store.AppState.on('change:state', window.onAppStateChange);
+            window.Store.Conn.on('change:battery', window.onConnChangeBattery);
+            window.Store.Call.on('add', window.onCallAdd);
+            window.Store.Msg.on('add', window.onMsgAdd);
             
             {
                 const module = window.Store.createOrUpdateReactionsModule;
-                const ogMethod = module.createOrUpdateReactions;
+                const ogMethod = module.createOrUpdateReactions.__ogMethod || module.createOrUpdateReactions;
                 module.createOrUpdateReactions = ((...args) => {
                     window.onReaction(args[0].map(reaction => {
                         const msgKey = window.Store.MsgKey.fromString(reaction.msgKey);
@@ -541,7 +559,24 @@ class Client extends EventEmitter {
 
                     return ogMethod(...args);
                 }).bind(module);
+                module.createOrUpdateReactions.__ogMethod = ogMethod;
             }
+        });
+    
+        await page.evaluate(() => {
+            window.cleanupWWebJS = function () {
+                window.loadingObserver.disconnect();
+                if (window.qrObserver) { window.qrObserver.disconnect(); }
+                window.Store.Msg.off('change', window.onMsgChange);
+                window.Store.Msg.off('change:type', window.onMsgChangeType);
+                window.Store.Msg.off('change:ack', window.onMsgChangeAck);
+                window.Store.Msg.off('change:isUnsentMedia', window.onMsgChangeIsUnsentMedia);
+                window.Store.Msg.off('remove', window.onMsgRemove);
+                window.Store.AppState.off('change:state', window.onAppStateChange);
+                window.Store.Conn.off('change:battery', window.onConnChangeBattery);
+                window.Store.Call.off('add', window.onCallAdd);
+                window.Store.Msg.off('add', window.onMsgAdd);
+            };
         });
 
         /**
