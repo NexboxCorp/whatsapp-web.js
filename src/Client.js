@@ -769,7 +769,7 @@ class Client extends EventEmitter {
             }
 
             const msg = await window.WWebJS.sendMessage(chat, message, options, sendSeen);
-            return JSON.parse(JSON.stringify(msg));
+            return msg.serialize();
         }, chatId, content, internalOptions, sendSeen);
 
         return new Message(this, newMessage);
