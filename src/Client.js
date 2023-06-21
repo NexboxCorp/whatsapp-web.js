@@ -1312,6 +1312,28 @@ class Client extends EventEmitter {
 
         return success;
     }
+
+    async getAutoDownloadSettings() {
+        const settings = await this.pupPage.evaluate(() => {
+            return {
+                audio: window.Store.AutoDownloadSettings.getAutoDownloadAudio(),
+                photos: window.Store.AutoDownloadSettings.getAutoDownloadPhotos(),
+                videos: window.Store.AutoDownloadSettings.getAutoDownloadVideos(),
+                documents: window.Store.AutoDownloadSettings.getAutoDownloadDocuments(),
+            };
+        });
+
+        return settings;
+    }
+
+    async setAutoDownloadSettings(settings) {
+        await this.pupPage.evaluate((settings) => {
+            if (settings.audio !== undefined) window.Store.AutoDownloadSettings.setAutoDownloadAudio(settings.audio);
+            if (settings.photos !== undefined) window.Store.AutoDownloadSettings.setAutoDownloadPhotos(settings.photos);
+            if (settings.videos !== undefined) window.Store.AutoDownloadSettings.setAutoDownloadVideos(settings.videos);
+            if (settings.documents !== undefined) window.Store.AutoDownloadSettings.setAutoDownloadDocuments(settings.documents);
+        }, settings);
+    }
 }
 
 module.exports = Client;
